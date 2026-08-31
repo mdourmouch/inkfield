@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fluid Symbol Simulation with Tweakpane</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #07080b;
+      font-family: 'Courier New', Courier, monospace;
+      color: #d9e7ff;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #perfHud {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      z-index: 20;
+      min-width: 280px;
+      padding: 12px 14px;
+      border: 1px solid rgba(120, 170, 255, 0.2);
+      border-radius: 12px;
+      background: rgba(7, 8, 11, 0.76);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      pointer-events: none;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="fluidCanvas"></canvas>
+  <div id="perfHud" aria-live="polite">Preparing benchmark…</div>
+
+  <script type="module">
+    import { Pane } from 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js';
+
+    const canvas = document.getElementById('fluidCanvas');
+    const ctx = canvas.getContext('2d');
+    const perfHud = document.getElementById('perfHud');
+
+    // Live Configurable Parameters
+    const PARAMS = {
+      cellSize: 14,
+      iterations: 4,
+      dt: 0.15,
+      viscosity: 0.00001,
+      diffusion: 0.00001,
+      dissipation: 0.997,     // Density fade
+      velocityDamping: 0.96, // Velocity fade (localization)
+      mouseRadius: 10,
+      mouseDensity: 0.25,
+      mouseForce: 0.005,     // Negative for backward impulse
+      clickRadius: 66,
+      clickForce: 1.6,
+      clickDensity: 3.1,
+      baseHue: 210,
+      hueShift: 40,
+    };
+
+    const RAMPS = [' ', '_', '<', 'o'];
+
+    let cols = 0, rows = 0, N = 0;
+    let u, v, u_prev, v_prev;
+    let density, density_prev;
+
+    const perf = {
+      fps: 0,
+      frameMs: 0,
+      stepMs: 0,
+      renderMs: 0,
+      activeCells: 0,
+      densitySum: 0,
+      maxFrameMs: 0,
+      samples: [],
+      rafSamples: [],
+      lastFpsUpdate: performance.now(),
+      fpsFrames: 0,
+      benchmarkRunning: false,
+      benchmarkStart: 0,
+      benchmarkDuration: 5000,
+      benchmarkSeeded: false,
+      benchmarkResult: null,
+      autoBurstEveryMs: 120,
+      lastAutoBurst: 0,
+    };
+
+    function IX(x, y) {
+      x = Math.max(0, Math.min(cols - 1, x));
+      y = Math.max(0, Math.min(rows - 1, y));
+      return x + y * cols;
+    }
+
+    function initGrid() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+
+      cols = Math.floor(width / PARAMS.cellSize);
+      rows = Math.floor(height / PARAMS.cellSize);
+      N = cols * rows;
+
+      u = new Float32Array(N);
+      v = new Float32Array(N);
+      u_prev = new Float32Array(N);
+      v_prev = new Float32Array(N);
+      density = new Float32Array(N);
+      density_prev = new Float32Array(N);
+    }
+
+    function setBnd(b, x) {
+      for (let i = 1; i < cols - 1; i++) {
+        x[IX(i, 0)] = b === 2 ? -x[IX(i, 1)] : x[IX(i, 1)];
+        x[IX(i, rows - 1)] = b === 2 ? -x[IX(i, rows - 2)] : x[IX(i, rows - 2)];
+      }
+      for (let j = 1; j < rows - 1; j++) {
+        x[IX(0, j)] = b === 1 ? -x[IX(1, j)] : x[IX(1, j)];
+        x[IX(cols - 1, j)] = b === 1 ? -x[IX(cols - 2, j)] : x[IX(cols - 2, j)];
+      }
+    }
+
+    function linSolve(b, x, x0, a, c) {
+      const cRecip = 1.0 / c;
+      for (let k = 0; k < PARAMS.iterations; k++) {
+        for (let j = 1; j < rows - 1; j++) {
+          for (let i = 1; i < cols - 1; i++) {
+            x[IX(i, j)] =
+              (x0[IX(i, j)] +
+                a *
+                  (x[IX(i + 1, j)] +
+                    x[IX(i - 1, j)] +
+                    x[IX(i, j + 1)] +
+                    x[IX(i, j - 1)])) *
+              cRecip;
+          }
+        }
+        setBnd(b, x);
+      }
+    }
+
+    function diffuse(b, x, x0, diff, dt) {
+      const a = dt * diff * (cols - 2) * (rows - 2);
+      linSolve(b, x, x0, a, 1 + 4 * a);
+    }
+
+    function advect(b, d, d0, u, v, dt) {
+      const dt0 = dt * (cols - 2);
+      for (let j = 1; j < rows - 1; j++) {
+        for (let i = 1; i < cols - 1; i++) {
+          let x = i - dt0 * u[IX(i, j)];
+          let y = j - dt0 * v[IX(i, j)];
+
+          if (x < 0.5) x = 0.5;
+          if (x > cols - 1.5) x = cols - 1.5;
+          const i0 = Math.floor(x);
+          const i1 = i0 + 1.0;
+
+          if (y < 0.5) y = 0.5;
+          if (y > rows - 1.5) y = rows - 1.5;
+          const j0 = Math.floor(y);
+          const j1 = j0 + 1.0;
+
+          const s1 = x - i0;
+          const s0 = 1.0 - s1;
+          const t1 = y - j0;
+          const t0 = 1.0 - t1;
+
+          d[IX(i, j)] =
+            s0 * (t0 * d0[IX(i0, j0)] + t1 * d0[IX(i0, j1)]) +
+            s1 * (t0 * d0[IX(i1, j0)] + t1 * d0[IX(i1, j1)]);
+        }
+      }
+      setBnd(b, d);
+    }
+
+    function project(u, v, p, div) {
+      for (let j = 1; j < rows - 1; j++) {
+        for (let i = 1; i < cols - 1; i++) {
+          div[IX(i, j)] =
+            (-0.5 *
+              (u[IX(i + 1, j)] -
+                u[IX(i - 1, j)] +
+                v[IX(i, j + 1)] -
+                v[IX(i, j - 1)])) /
+            Math.max(cols, rows);
+          p[IX(i, j)] = 0;
+        }
+      }
+      setBnd(0, div);
+      setBnd(0, p);
+      linSolve(0, p, div, 1, 4);
+
+      for (let j = 1; j < rows - 1; j++) {
+        for (let i = 1; i < cols - 1; i++) {
+          u[IX(i, j)] -= 0.5 * (p[IX(i + 1, j)] - p[IX(i - 1, j)]) * cols;
+          v[IX(i, j)] -= 0.5 * (p[IX(i, j + 1)] - p[IX(i, j - 1)]) * rows;
+        }
+      }
+      setBnd(1, u);
+      setBnd(2, v);
+    }
+
+    function step() {
+      diffuse(1, u_prev, u, PARAMS.viscosity, PARAMS.dt);
+      diffuse(2, v_prev, v, PARAMS.viscosity, PARAMS.dt);
+      project(u_prev, v_prev, u, v);
+      advect(1, u, u_prev, u_prev, v_prev, PARAMS.dt);
+      advect(2, v, v_prev, u_prev, v_prev, PARAMS.dt);
+      project(u, v, u_prev, v_prev);
+
+      diffuse(0, density_prev, density, PARAMS.diffusion, PARAMS.dt);
+      advect(0, density, density_prev, u, v, PARAMS.dt);
+
+      for (let i = 0; i < N; i++) {
+        density[i] *= PARAMS.dissipation;
+        u[i] *= PARAMS.velocityDamping;
+        v[i] *= PARAMS.velocityDamping;
+      }
+    }
+
+    function injectFluid(cx, cy, radius, amount, forceX = 0, forceY = 0) {
+      const gx = Math.floor(cx / PARAMS.cellSize);
+      const gy = Math.floor(cy / PARAMS.cellSize);
+      const r = Math.ceil(radius / PARAMS.cellSize);
+
+      for (let y = -r; y <= r; y++) {
+        for (let x = -r; x <= r; x++) {
+          if (x * x + y * y <= r * r) {
+            const idx = IX(gx + x, gy + y);
+            density[idx] = Math.min(density[idx] + amount, 5.0);
+            u[idx] += forceX;
+            v[idx] += forceY;
+          }
+        }
+      }
+    }
+
+    function render() {
+      ctx.fillStyle = '#07080b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = `${Math.floor(PARAMS.cellSize * 0.85)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      const rampLength = RAMPS.length;
+      let activeCells = 0;
+      let densitySum = 0;
+
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          const idx = IX(i, j);
+          const d = density[idx];
+          densitySum += d;
+
+          if (d > 0.005) {
+            activeCells += 1;
+            const speed = Math.sqrt(u[idx] * u[idx] + v[idx] * v[idx]);
+            const val = Math.min(1, d + speed * 0.1);
+
+            const charIdx = Math.floor(val * (rampLength - 1));
+            const char = RAMPS[charIdx];
+
+            const hue = PARAMS.baseHue + val * PARAMS.hueShift;
+            ctx.fillStyle = `hsla(${hue}, 85%, 65%, 0.85)`;
+
+            const px = i * PARAMS.cellSize + PARAMS.cellSize / 2;
+            const py = j * PARAMS.cellSize + PARAMS.cellSize / 2;
+            ctx.fillText(char, px, py);
+          }
+        }
+      }
+
+      perf.activeCells = activeCells;
+      perf.densitySum = densitySum;
+    }
+
+    function percentile(sortedValues, p) {
+      if (!sortedValues.length) return 0;
+      const idx = Math.min(sortedValues.length - 1, Math.floor((sortedValues.length - 1) * p));
+      return sortedValues[idx];
+    }
+
+    function updateHud() {
+      const result = perf.benchmarkResult;
+      const benchmarkLine = result
+        ? `Benchmark 5s: avg ${result.avgFrame.toFixed(2)}ms | p95 ${result.p95Frame.toFixed(2)}ms | min ${result.minFps.toFixed(1)} FPS`
+        : (perf.benchmarkRunning ? 'Benchmark: running automated stress pattern…' : 'Benchmark: idle');
+
+      perfHud.textContent =
+        `FPS: ${perf.fps.toFixed(1)}\n` +
+        `Frame: ${perf.frameMs.toFixed(2)} ms\n` +
+        `Step: ${perf.stepMs.toFixed(2)} ms\n` +
+        `Render: ${perf.renderMs.toFixed(2)} ms\n` +
+        `Max frame: ${perf.maxFrameMs.toFixed(2)} ms\n` +
+        `Active cells: ${perf.activeCells} / ${N}\n` +
+        `Density sum: ${perf.densitySum.toFixed(1)}\n` +
+        benchmarkLine + `\n` +
+        `Press B to run benchmark, H to hide HUD.`;
+    }
+
+    function beginBenchmark() {
+      perf.samples = [];
+      perf.rafSamples = [];
+      perf.maxFrameMs = 0;
+      perf.benchmarkResult = null;
+      perf.benchmarkRunning = true;
+      perf.benchmarkStart = performance.now();
+      perf.lastAutoBurst = 0;
+      perf.benchmarkSeeded = false;
+    }
+
+    function finishBenchmark() {
+      perf.benchmarkRunning = false;
+      const frames = perf.samples.slice().sort((a, b) => a - b);
+      const raf = perf.rafSamples.slice().sort((a, b) => a - b);
+      const avgFrame = frames.length ? frames.reduce((a, b) => a + b, 0) / frames.length : 0;
+      const avgRaf = raf.length ? raf.reduce((a, b) => a + b, 0) / raf.length : 0;
+      const p95Frame = percentile(frames, 0.95);
+      const p99Frame = percentile(frames, 0.99);
+      const minFps = raf.length ? 1000 / Math.max(...raf) : 0;
+      const avgFps = avgRaf ? 1000 / avgRaf : 0;
+      perf.benchmarkResult = { avgFrame, p95Frame, p99Frame, minFps, avgFps, frames: frames.length };
+      console.table({ benchmark_ms_5000: { avgFrame, p95Frame, p99Frame, avgFps, minFps, frames: frames.length } });
+    }
+
+    function automatedBurst(now) {
+      if (!perf.benchmarkRunning) return;
+      if (!perf.benchmarkSeeded) {
+        const points = [
+          [window.innerWidth * 0.25, window.innerHeight * 0.35],
+          [window.innerWidth * 0.75, window.innerHeight * 0.35],
+          [window.innerWidth * 0.5, window.innerHeight * 0.65],
+        ];
+        for (const [x, y] of points) {
+          injectFluid(x, y, PARAMS.clickRadius * 1.4, PARAMS.clickDensity * 1.2, 0.18, -0.18);
+        }
+        perf.benchmarkSeeded = true;
+      }
+      if (!perf.lastAutoBurst || now - perf.lastAutoBurst >= perf.autoBurstEveryMs) {
+        const t = (now - perf.benchmarkStart) * 0.0025;
+        const x = window.innerWidth * (0.5 + 0.32 * Math.cos(t));
+        const y = window.innerHeight * (0.5 + 0.24 * Math.sin(t * 1.7));
+        const dx = Math.cos(t * 2.1) * 24;
+        const dy = Math.sin(t * 1.3) * 24;
+        injectFluid(x, y, PARAMS.mouseRadius * 1.5, PARAMS.mouseDensity * 1.25, dx * PARAMS.mouseForce, dy * PARAMS.mouseForce);
+        perf.lastAutoBurst = now;
+      }
+      if (now - perf.benchmarkStart >= perf.benchmarkDuration) {
+        finishBenchmark();
+      }
+    }
+
+    function animate(now = performance.now()) {
+      const frameStart = performance.now();
+      automatedBurst(now);
+
+      const stepStart = performance.now();
+      step();
+      const stepEnd = performance.now();
+
+      const renderStart = performance.now();
+      render();
+      const renderEnd = performance.now();
+
+      perf.stepMs = stepEnd - stepStart;
+      perf.renderMs = renderEnd - renderStart;
+      perf.frameMs = renderEnd - frameStart;
+      perf.maxFrameMs = Math.max(perf.maxFrameMs, perf.frameMs);
+      perf.fpsFrames += 1;
+
+      const elapsed = renderEnd - perf.lastFpsUpdate;
+      if (perf.benchmarkRunning) perf.rafSamples.push(perf.frameMs);
+      if (elapsed >= 500) {
+        perf.fps = (perf.fpsFrames * 1000) / elapsed;
+        perf.fpsFrames = 0;
+        perf.lastFpsUpdate = renderEnd;
+        updateHud();
+      }
+
+      if (perf.benchmarkRunning) {
+        perf.samples.push(perf.frameMs);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    // Interactive Listeners
+    let lastX = 0, lastY = 0;
+
+    window.addEventListener('mousemove', (e) => {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+
+      injectFluid(
+        e.clientX,
+        e.clientY,
+        PARAMS.mouseRadius,
+        PARAMS.mouseDensity,
+        dx * PARAMS.mouseForce,
+        dy * PARAMS.mouseForce
+      );
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    window.addEventListener('mousedown', (e) => {
+      const radius = PARAMS.clickRadius;
+      const gx = Math.floor(e.clientX / PARAMS.cellSize);
+      const gy = Math.floor(e.clientY / PARAMS.cellSize);
+      const r = Math.ceil(radius / PARAMS.cellSize);
+
+      for (let y = -r; y <= r; y++) {
+        for (let x = -r; x <= r; x++) {
+          const distSq = x * x + y * y;
+          if (distSq <= r * r && distSq > 0) {
+            const idx = IX(gx + x, gy + y);
+            const dist = Math.sqrt(distSq);
+            const force = (1 - dist / r) * PARAMS.clickForce;
+            u[idx] += (x / dist) * force;
+            v[idx] += (y / dist) * force;
+            density[idx] = Math.min(density[idx] + PARAMS.clickDensity, 5.0);
+          }
+        }
+      }
+    });
+
+    window.addEventListener('resize', initGrid);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'b' || e.key === 'B') beginBenchmark();
+      if (e.key === 'h' || e.key === 'H') {
+        perfHud.style.display = perfHud.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+
+    // Setup Tweakpane Controls
+    function setupGui() {
+      const pane = new Pane({ title: 'Simulation Controls' });
+
+      const fGrid = pane.addFolder({ title: 'Grid & Visuals' });
+      fGrid.addBinding(PARAMS, 'cellSize', { min: 8, max: 32, step: 1 }).on('change', () => initGrid());
+      fGrid.addBinding(PARAMS, 'baseHue', { min: 0, max: 360, step: 1 });
+      fGrid.addBinding(PARAMS, 'hueShift', { min: 0, max: 180, step: 1 });
+
+      const fFluid = pane.addFolder({ title: 'Fluid Dynamics' });
+      fFluid.addBinding(PARAMS, 'dissipation', { min: 0.90, max: 0.999, step: 0.001, label: 'Density Fade' });
+      fFluid.addBinding(PARAMS, 'velocityDamping', { min: 0.50, max: 0.99, step: 0.01, label: 'Velocity Fade' });
+      fFluid.addBinding(PARAMS, 'viscosity', { min: 0, max: 0.0005, step: 0.00001 });
+      fFluid.addBinding(PARAMS, 'diffusion', { min: 0, max: 0.001, step: 0.00005 });
+      fFluid.addBinding(PARAMS, 'iterations', { min: 1, max: 10, step: 1 });
+
+      const fMouse = pane.addFolder({ title: 'Mouse Trail' });
+      fMouse.addBinding(PARAMS, 'mouseRadius', { min: 2, max: 40, step: 1 });
+      fMouse.addBinding(PARAMS, 'mouseDensity', { min: 0.05, max: 2.0, step: 0.05 });
+      fMouse.addBinding(PARAMS, 'mouseForce', { min: -0.02, max: 0.02, step: 0.0005, label: 'Impulse Force' });
+
+      const fClick = pane.addFolder({ title: 'Click Burst' });
+      fClick.addBinding(PARAMS, 'clickRadius', { min: 8, max: 80, step: 2 });
+      fClick.addBinding(PARAMS, 'clickForce', { min: 0.05, max: 2.0, step: 0.05 });
+      fClick.addBinding(PARAMS, 'clickDensity', { min: 0.2, max: 5.0, step: 0.1 });
+    }
+
+    // Bootstrap
+    initGrid();
+    setupGui();
+    updateHud();
+    requestAnimationFrame((t) => { perf.lastFpsUpdate = t; animate(t); });
+  </script>
+</body>
+</html>
