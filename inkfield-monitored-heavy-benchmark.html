@@ -84,6 +84,7 @@
       samples: [],
       rafSamples: [],
       lastFpsUpdate: performance.now(),
+      lastRaf: 0,
       fpsFrames: 0,
       benchmarkRunning: false,
       benchmarkStart: 0,
@@ -316,6 +317,7 @@
       perf.benchmarkRunning = true;
       perf.benchmarkStart = performance.now();
       perf.lastAutoBurst = 0;
+      perf.lastRaf = 0;
       perf.benchmarkSeeded = false;
     }
 
@@ -386,7 +388,10 @@
       perf.fpsFrames += 1;
 
       const elapsed = renderEnd - perf.lastFpsUpdate;
-      if (perf.benchmarkRunning) perf.rafSamples.push(perf.frameMs);
+      // rafSamples = real wall-clock frame interval (vsync + compositing included).
+      // perf.samples = JS work only. Before this fix both held the same number.
+      if (perf.benchmarkRunning && perf.lastRaf) perf.rafSamples.push(now - perf.lastRaf);
+      perf.lastRaf = now;
       if (elapsed >= 500) {
         perf.fps = (perf.fpsFrames * 1000) / elapsed;
         perf.fpsFrames = 0;

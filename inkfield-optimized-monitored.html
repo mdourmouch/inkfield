@@ -42,17 +42,27 @@
   <div id="perfHud" aria-live="polite">Preparing benchmark…</div>
 
   <script type="module">
-    import { Pane } from 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js';
-
     const canvas = document.getElementById('fluidCanvas');
     const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     const perfHud = document.getElementById('perfHud');
 
-    const MAX_DPR = 1.5;
+    // ponytail: pinned to 1 so the A/B against the baseline compares equal pixel counts.
+    // Raise to 1.5 for retina sharpness once measuring is done — the atlas follows DPR.
+    const MAX_DPR = 1;
     const DPR = Math.min(window.devicePixelRatio || 1, MAX_DPR);
     let pressure, divergence;
     let renderFont = '';
     let halfCell = 0;
+
+    // Glyph atlas: every (char, hue-bucket) pair rasterised once, so the render loop is
+    // drawImage-only — no per-cell colour string, no per-cell CSS parse, no text shaping.
+    const HUE_STEPS = 16;
+    // Tiles are padded past the cell so a tall glyph (@ # %) overflows into its own tile
+    // instead of bleeding into the neighbour and blitting as a stray fragment.
+    const TILE_PAD = 1.4;
+    const atlas = document.createElement('canvas');
+    const atlasCtx = atlas.getContext('2d');
+    let tileCss = 0, tilePx = 0, tileOff = 0;
 
     // Live Configurable Parameters
     const PARAMS = {
@@ -92,6 +102,7 @@
       samples: [],
       rafSamples: [],
       lastFpsUpdate: performance.now(),
+      lastRaf: 0,
       fpsFrames: 0,
       benchmarkRunning: false,
       benchmarkStart: 0,
@@ -132,19 +143,42 @@
 
       renderFont = `${Math.floor(PARAMS.cellSize * 0.85)}px monospace`;
       halfCell = PARAMS.cellSize * 0.5;
-      ctx.font = renderFont;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      buildAtlas();
     }
 
-    function setBnd(b, x) {
-      for (let i = 1; i < cols - 1; i++) {
-        x[IX(i, 0)] = b === 2 ? -x[IX(i, 1)] : x[IX(i, 1)];
-        x[IX(i, rows - 1)] = b === 2 ? -x[IX(i, rows - 2)] : x[IX(i, rows - 2)];
+    function buildAtlas() {
+      tileCss = PARAMS.cellSize * TILE_PAD;
+      tilePx = tileCss * DPR;
+      tileOff = (tileCss - PARAMS.cellSize) * 0.5;
+      // Assigning width/height clears the canvas and resets state, so transform comes after.
+      atlas.width = Math.ceil(RAMPS.length * tilePx);
+      atlas.height = Math.ceil(HUE_STEPS * tilePx);
+      atlasCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      atlasCtx.font = renderFont;
+      atlasCtx.textAlign = 'center';
+      atlasCtx.textBaseline = 'middle';
+      const half = tileCss * 0.5;
+      for (let k = 0; k < HUE_STEPS; k++) {
+        const hue = PARAMS.baseHue + (k / (HUE_STEPS - 1)) * PARAMS.hueShift;
+        atlasCtx.fillStyle = `hsla(${hue}, 85%, 65%, 0.85)`;
+        for (let c = 0; c < RAMPS.length; c++) {
+          atlasCtx.fillText(RAMPS[c], c * tileCss + half, k * tileCss + half);
+        }
       }
-      for (let j = 1; j < rows - 1; j++) {
-        x[IX(0, j)] = b === 1 ? -x[IX(1, j)] : x[IX(1, j)];
-        x[IX(cols - 1, j)] = b === 1 ? -x[IX(cols - 2, j)] : x[IX(cols - 2, j)];
+    }
+
+    // Interior loops never leave the grid, so IX()'s clamp was dead work on every access.
+    // Neighbours are idx±1 (same row) and idx±cols (row above/below). bench-step.mjs asserts
+    // this produces a bit-identical field to the clamped version.
+    function setBnd(b, x) {
+      const top = 0, top1 = cols, bot = (rows - 1) * cols, bot1 = (rows - 2) * cols;
+      for (let i = 1; i < cols - 1; i++) {
+        x[top + i] = b === 2 ? -x[top1 + i] : x[top1 + i];
+        x[bot + i] = b === 2 ? -x[bot1 + i] : x[bot1 + i];
+      }
+      for (let j = 1, r = cols; j < rows - 1; j++, r += cols) {
+        x[r] = b === 1 ? -x[r + 1] : x[r + 1];
+        x[r + cols - 1] = b === 1 ? -x[r + cols - 2] : x[r + cols - 2];
       }
     }
 
@@ -152,15 +186,9 @@
       const cRecip = 1.0 / c;
       for (let k = 0; k < PARAMS.iterations; k++) {
         for (let j = 1; j < rows - 1; j++) {
-          for (let i = 1; i < cols - 1; i++) {
-            x[IX(i, j)] =
-              (x0[IX(i, j)] +
-                a *
-                  (x[IX(i + 1, j)] +
-                    x[IX(i - 1, j)] +
-                    x[IX(i, j + 1)] +
-                    x[IX(i, j - 1)])) *
-              cRecip;
+          const r = j * cols;
+          for (let idx = r + 1, end = r + cols - 1; idx < end; idx++) {
+            x[idx] = (x0[idx] + a * (x[idx + 1] + x[idx - 1] + x[idx + cols] + x[idx - cols])) * cRecip;
           }
         }
         setBnd(b, x);
@@ -174,45 +202,32 @@
 
     function advect(b, d, d0, u, v, dt) {
       const dt0 = dt * (cols - 2);
+      const xMax = cols - 1.5, yMax = rows - 1.5;
       for (let j = 1; j < rows - 1; j++) {
+        const r = j * cols;
         for (let i = 1; i < cols - 1; i++) {
-          let x = i - dt0 * u[IX(i, j)];
-          let y = j - dt0 * v[IX(i, j)];
-
-          if (x < 0.5) x = 0.5;
-          if (x > cols - 1.5) x = cols - 1.5;
-          const i0 = Math.floor(x);
-          const i1 = i0 + 1.0;
-
-          if (y < 0.5) y = 0.5;
-          if (y > rows - 1.5) y = rows - 1.5;
-          const j0 = Math.floor(y);
-          const j1 = j0 + 1.0;
-
-          const s1 = x - i0;
-          const s0 = 1.0 - s1;
-          const t1 = y - j0;
-          const t0 = 1.0 - t1;
-
-          d[IX(i, j)] =
-            s0 * (t0 * d0[IX(i0, j0)] + t1 * d0[IX(i0, j1)]) +
-            s1 * (t0 * d0[IX(i1, j0)] + t1 * d0[IX(i1, j1)]);
+          const idx = r + i;
+          let x = i - dt0 * u[idx];
+          let y = j - dt0 * v[idx];
+          if (x < 0.5) x = 0.5; else if (x > xMax) x = xMax;
+          if (y < 0.5) y = 0.5; else if (y > yMax) y = yMax;
+          const i0 = x | 0, j0 = y | 0;
+          const s1 = x - i0, s0 = 1.0 - s1;
+          const t1 = y - j0, t0 = 1.0 - t1;
+          const a0 = j0 * cols + i0, a1 = a0 + cols;
+          d[idx] = s0 * (t0 * d0[a0] + t1 * d0[a1]) + s1 * (t0 * d0[a0 + 1] + t1 * d0[a1 + 1]);
         }
       }
       setBnd(b, d);
     }
 
     function project(u, v, p, div) {
+      const inv = -0.5 / Math.max(cols, rows);
       for (let j = 1; j < rows - 1; j++) {
-        for (let i = 1; i < cols - 1; i++) {
-          div[IX(i, j)] =
-            (-0.5 *
-              (u[IX(i + 1, j)] -
-                u[IX(i - 1, j)] +
-                v[IX(i, j + 1)] -
-                v[IX(i, j - 1)])) /
-            Math.max(cols, rows);
-          p[IX(i, j)] = 0;
+        const r = j * cols;
+        for (let idx = r + 1, end = r + cols - 1; idx < end; idx++) {
+          div[idx] = inv * (u[idx + 1] - u[idx - 1] + v[idx + cols] - v[idx - cols]);
+          p[idx] = 0;
         }
       }
       setBnd(0, div);
@@ -220,9 +235,10 @@
       linSolve(0, p, div, 1, 4);
 
       for (let j = 1; j < rows - 1; j++) {
-        for (let i = 1; i < cols - 1; i++) {
-          u[IX(i, j)] -= 0.5 * (p[IX(i + 1, j)] - p[IX(i - 1, j)]) * cols;
-          v[IX(i, j)] -= 0.5 * (p[IX(i, j + 1)] - p[IX(i, j - 1)]) * rows;
+        const r = j * cols;
+        for (let idx = r + 1, end = r + cols - 1; idx < end; idx++) {
+          u[idx] -= 0.5 * (p[idx + 1] - p[idx - 1]) * cols;
+          v[idx] -= 0.5 * (p[idx + cols] - p[idx - cols]) * rows;
         }
       }
       setBnd(1, u);
@@ -283,38 +299,31 @@
       ctx.fillStyle = '#07080b';
       ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
-      const rampLength = RAMPS.length;
-      const baseHue = PARAMS.baseHue;
-      const hueShift = PARAMS.hueShift;
       const cellSize = PARAMS.cellSize;
-      const threshold = 0.005;
-      const speedScale = 0.1;
+      const lastRamp = RAMPS.length - 1;
+      const lastHue = HUE_STEPS - 1;
+      const src = tilePx;
       let activeCells = 0;
-      let densitySum = 0;
 
       for (let j = 0; j < rows; j++) {
-        const py = j * cellSize + halfCell;
-        for (let i = 0; i < cols; i++) {
-          const idx = i + j * cols;
+        const py = j * cellSize - tileOff;
+        for (let i = 0, idx = j * cols; i < cols; i++, idx++) {
           const d = density[idx];
-          densitySum += d;
-          if (d <= threshold) continue;
+          if (d <= 0.005) continue;
 
           activeCells += 1;
-          const ux = u[idx];
-          const vy = v[idx];
-          const speed = Math.hypot(ux, vy);
-          const val = Math.min(1, d + speed * speedScale);
-          const char = RAMPS[Math.floor(val * (rampLength - 1))];
-          const hue = baseHue + val * hueShift;
+          const ux = u[idx], vy = v[idx];
+          const val = Math.min(1, d + Math.sqrt(ux * ux + vy * vy) * 0.1);
 
-          ctx.fillStyle = `hsla(${hue}, 85%, 65%, 0.85)`;
-          ctx.fillText(char, i * cellSize + halfCell, py);
+          ctx.drawImage(
+            atlas,
+            ((val * lastRamp) | 0) * src, ((val * lastHue) | 0) * src, src, src,
+            i * cellSize - tileOff, py, tileCss, tileCss
+          );
         }
       }
 
       perf.activeCells = activeCells;
-      perf.densitySum = densitySum;
     }
 
     function percentile(sortedValues, p) {
@@ -324,6 +333,11 @@
     }
 
     function updateHud() {
+      // HUD-only telemetry: a full-grid scan every 500ms, not once per frame.
+      let densitySum = 0;
+      for (let i = 0; i < N; i++) densitySum += density[i];
+      perf.densitySum = densitySum;
+
       const result = perf.benchmarkResult;
       const benchmarkLine = result
         ? `Benchmark 5s: avg ${result.avgFrame.toFixed(2)}ms | p95 ${result.p95Frame.toFixed(2)}ms | min ${result.minFps.toFixed(1)} FPS`
@@ -349,6 +363,7 @@
       perf.benchmarkRunning = true;
       perf.benchmarkStart = performance.now();
       perf.lastAutoBurst = 0;
+      perf.lastRaf = 0;
       perf.benchmarkSeeded = false;
     }
 
@@ -412,7 +427,10 @@
       perf.fpsFrames += 1;
 
       const elapsed = renderEnd - perf.lastFpsUpdate;
-      if (perf.benchmarkRunning) perf.rafSamples.push(perf.frameMs);
+      // rafSamples = real wall-clock frame interval (vsync + compositing included).
+      // perf.samples = JS work only. Before this fix both held the same number.
+      if (perf.benchmarkRunning && perf.lastRaf) perf.rafSamples.push(now - perf.lastRaf);
+      perf.lastRaf = now;
       if (elapsed >= 500) {
         perf.fps = (perf.fpsFrames * 1000) / elapsed;
         perf.fpsFrames = 0;
@@ -474,14 +492,15 @@
     });
 
     // Setup Tweakpane Controls
-    function setupGui() {
+    async function setupGui() {
+      const { Pane } = await import('https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js');
       const pane = new Pane({ title: 'Simulation Controls' });
 
       const fGrid = pane.addFolder({ title: 'Grid & Visuals' });
       fGrid.addBinding(PARAMS, 'cellSize', { min: 8, max: 32, step: 1 }).on('change', () => initGrid());
       fGrid.addBinding(PARAMS, 'dt', { min: 0.05, max: 0.3, step: 0.01, label: 'Time Step' });
-      fGrid.addBinding(PARAMS, 'baseHue', { min: 0, max: 360, step: 1 });
-      fGrid.addBinding(PARAMS, 'hueShift', { min: 0, max: 180, step: 1 });
+      fGrid.addBinding(PARAMS, 'baseHue', { min: 0, max: 360, step: 1 }).on('change', buildAtlas);
+      fGrid.addBinding(PARAMS, 'hueShift', { min: 0, max: 180, step: 1 }).on('change', buildAtlas);
 
       const fFluid = pane.addFolder({ title: 'Fluid Dynamics' });
       fFluid.addBinding(PARAMS, 'dissipation', { min: 0.90, max: 0.999, step: 0.001, label: 'Density Fade' });
@@ -503,7 +522,8 @@
 
     // Bootstrap
     initGrid();
-    setupGui();
+    // Tweakpane is ~150KB of CDN for dev-only sliders. Open with #tune to load it.
+    if (location.hash === '#tune') setupGui();
     updateHud();
     requestAnimationFrame((t) => { perf.lastFpsUpdate = t; animate(t); });
   </script>
