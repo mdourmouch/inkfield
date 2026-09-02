@@ -46,6 +46,15 @@
 
     const canvas = document.getElementById('fluidCanvas');
     const ctx = canvas.getContext('2d');
+
+    // Render at the display's real pixel density, so glyphs are as crisp as body text.
+    // A canvas backing store smaller than its CSS box gets stretched by the compositor --
+    // that upscale, not the atlas, is what made the glyphs look blurry next to a paragraph.
+    // Capped at 2: past that the fragment cost keeps squaring and the gain is invisible.
+    // Re-read in initGrid(), so moving the window to a monitor of a different density or
+    // changing browser zoom re-rasterises instead of stretching the old backing store.
+    const MAX_DPR = location.hash.includes('dpr1') ? 1 : 2;   // #dpr1 reproduces the equal-pixel benchmarks
+    let DPR = 1;
     const perfHud = document.getElementById('perfHud');
 
     // Live Configurable Parameters
@@ -102,10 +111,15 @@
     }
 
     function initGrid() {
+      DPR = Math.min(window.devicePixelRatio || 1, MAX_DPR);
       const width = window.innerWidth;
       const height = window.innerHeight;
-      canvas.width = width;
-      canvas.height = height;
+      canvas.width = Math.floor(width * DPR);
+      canvas.height = Math.floor(height * DPR);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      // Assigning width/height resets context state, so the transform goes on after.
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
       cols = Math.floor(width / PARAMS.cellSize);
       rows = Math.floor(height / PARAMS.cellSize);
@@ -248,7 +262,7 @@
 
     function render() {
       ctx.fillStyle = '#07080b';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
       ctx.font = `${Math.floor(PARAMS.cellSize * 0.85)}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -298,6 +312,7 @@
         : (perf.benchmarkRunning ? 'Benchmark: running heavy automated stress pattern…' : 'Benchmark: idle');
 
       perfHud.textContent =
+        `Pixels: ${canvas.width}×${canvas.height} @ ${DPR}x DPR\n` +
         `FPS: ${perf.fps.toFixed(1)}\n` +
         `Frame: ${perf.frameMs.toFixed(2)} ms\n` +
         `Step: ${perf.stepMs.toFixed(2)} ms\n` +
@@ -452,6 +467,16 @@
     });
 
     window.addEventListener('resize', initGrid);
+
+    // devicePixelRatio can change with no resize event -- dragging a window between a retina
+    // and a non-retina monitor keeps the CSS size identical. Each query is pinned to the
+    // current density and fires once it stops matching, so re-arm against the new value.
+    // Where the query is unsupported it simply never fires and the load-time DPR stands.
+    (function watchDpr() {
+      matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+        .addEventListener('change', () => { initGrid(); watchDpr(); }, { once: true });
+    })();
+
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'b' || e.key === 'B') beginBenchmark();
