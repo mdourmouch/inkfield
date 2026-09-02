@@ -80,10 +80,10 @@
     // Live Configurable Parameters
     const PARAMS = {
       cellSize: 14,
-      iterations: 4,
+      iterations: 2,
       dt: 0.15,
-      viscosity: 0.00001,
-      diffusion: 0.00001,
+      viscosity: 0,
+      diffusion: 0,
       dissipation: 0.997,     // Density fade
       velocityDamping: 0.96, // Velocity fade (localization)
       mouseRadius: 10,
@@ -314,6 +314,12 @@
     }
 
     function diffuse(b, x, x0, diff, dt) {
+      // diffuse() is 3 of step()'s 5 linSolve calls -- 60% of the solver. At zero
+      // diffusion the solve converges to a copy, so skip the sweeps and copy directly.
+      // x0 already carries valid boundaries from the operation that produced it.
+      // The sliders still work: raise viscosity/diffusion and the solver runs again,
+      // paying for the blur only when it was asked for.
+      if (diff <= 0) { x.set(x0); return; }
       const a = dt * diff * (cols - 2) * (rows - 2);
       linSolve(b, x, x0, a, 1 + 4 * a);
     }
