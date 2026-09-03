@@ -1,28 +1,147 @@
 # inkfield
 
-A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs on a dark ground.
-
-## The effect
+A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs. Drop it behind a
+page as a background effect: no dependencies, no build step, WebGL2 with a Canvas2D
+fallback, 13 kB packed.
 
 Every frame solves incompressible fluid motion on a grid — advect, project, damp — then
 maps each cell to one of four glyphs (`' ' _ < o`) by density plus velocity magnitude.
 Ink is pushed by the pointer, dissipates as it spreads, and shifts hue with intensity.
 The result reads as smoke or ink in water, drawn in text.
 
-- **Move** the pointer to trail ink along the flow.
-- **Click** for a radial burst.
-- **B** runs an 8s automated stress benchmark, **H** toggles the HUD.
+## Install
 
-## Files
+```sh
+npm install inkfield
+```
+
+Or skip the install entirely — it is plain ESM, so a CDN works as-is:
+
+```html
+<script type="module">
+  import { createInkfield } from 'https://esm.sh/inkfield';
+  createInkfield();
+</script>
+```
+
+## Use
+
+`createInkfield()` with no arguments appends its own canvas as a fixed, full-viewport,
+click-through background and starts running.
+
+```js
+import { createInkfield } from 'inkfield';
+
+const ink = createInkfield({ baseHue: 210, background: '#07080b' });
+// later
+ink.destroy();
+```
+
+> **The canvas sits at `z-index: -1`.** A background painted on `<body>` will cover it.
+> Move the page colour to `html`, or pass your own canvas and place it yourself.
+
+### React / Next.js
+
+```jsx
+// app/layout.jsx — works under `output: 'export'`; the component is already 'use client'
+import { Inkfield } from 'inkfield/react';
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body>
+        <Inkfield baseHue={210} />
+        {children}
+      </body>
+    </html>
+  );
+}
+```
+
+Props are read once, on mount — changing one later does not restart the effect, because
+restarting throws the field away. To animate a parameter, mutate `handle.params` from a
+`createInkfield` call of your own; the solver reads it live.
+
+If your bundler objects to untranspiled ESM in `node_modules`, add
+`transpilePackages: ['inkfield']` to `next.config.js`.
+
+### Your own canvas
+
+Pass one and inkfield leaves its styling and placement to you. Size it with CSS: only the
+backing store is written, so a `ResizeObserver` keeps the grid in step with whatever box
+the canvas ends up in — full viewport or a card in a layout.
+
+```js
+createInkfield({ canvas: document.querySelector('#bg'), background: null });
+```
+
+## Options
+
+All of [`defaults`](src/inkfield.js) may be passed inline, plus:
 
 | | |
 |---|---|
-| `inkfield-optimized-monitored.html` | WebGL2 instanced renderer, glyph atlas, reduced solver. Open this one. |
-| `inkfield-monitored.html` | Unoptimised Canvas2D original, kept as the A/B control. |
-| `bench-step.mjs` | `node bench-step.mjs` — asserts the shipped solver stays bit-identical to the reference. |
+| `canvas` | Draw into this canvas instead of creating one. |
+| `container` | Parent for a created canvas. Default `document.body`. |
+| `renderer` | `'auto'` (default), `'webgl2'`, `'canvas2d'`. |
+| `background` | Any CSS colour, or `null` for a transparent canvas. Default `'#07080b'`. |
+| `glyphs` | Density ramp, faintest first. The first glyph is never drawn. Default `' _<o'`. |
+| `fontFamily` | Default `'monospace'`. |
+| `maxDpr` | Pixel-density cap. Default `2`. |
+| `zIndex` | For a created canvas. Default `-1`. |
+| `reducedMotion` | `'respect'` (default) or `'ignore'`. |
+| `onFrame` | `(stats) => void`, every frame. Timings, grid size, cells drawn. |
 
-## URL flags
+Sim parameters — `cellSize`, `dt`, `dissipation`, `velocityDamping`, `baseHue`,
+`hueShift`, `mouseRadius`, `clickForce`, … — are listed in `defaults` and live on
+`ink.params`. Mutate them and the next frame uses them; after `cellSize`, call
+`ink.resize()`.
 
-`#tune` Tweakpane controls · `#bench` autostart benchmark · `#2d` force Canvas2D · `#dpr1` force 1x pixel density
+## Handle
 
-Combine them in one hash (`#2d-bench`).
+```js
+ink.params            // live, mutable
+ink.stats             // last frame's timings and counts
+ink.renderer          // 'webgl2' | 'canvas2d'
+ink.inject(x, y, { radius, density, fx, fy })   // push ink, CSS px from the canvas corner
+ink.burst(x, y, { radius, density, force })     // radial burst
+ink.start() / ink.stop() / ink.running
+ink.resize()
+ink.destroy()
+```
+
+`destroy()` is required on unmount — React strict mode mounts twice, and two live rAF
+loops is two simulations.
+
+## Behaviour worth knowing
+
+- **The field starts empty.** Nothing is drawn until the pointer moves or you call
+  `inject`/`burst`. If you want motion on an untouched page, drive it yourself from a
+  timer — see the benchmark's stress pattern in `demo/index.html`.
+- **`prefers-reduced-motion` stops the loop** and paints the background only. Pass
+  `reducedMotion: 'ignore'` to override.
+- **Backgrounded tabs cost nothing** — `requestAnimationFrame` does not fire. A lost
+  WebGL context is caught and re-initialised on restore.
+- **Pointer listeners are on `window`**, since a background canvas is `pointer-events:
+  none` and never receives the events itself.
+
+## Development
+
+| | |
+|---|---|
+| `npm test` | Renderer wiring, input, dissipation and teardown, on a DOM stub. |
+| `npm run bench` | Asserts the shipped solver stays bit-identical to the reference, and times both. |
+| `npm run demo` | Serves the repo on :8080; open <http://localhost:8080/demo/>. |
+
+The demo must be served, not opened as a file — browsers block ES modules over `file://`.
+
+The playground takes URL flags: `#tune` Tweakpane controls · `#bench` autostart the 8s
+stress benchmark · `#2d` force Canvas2D · `#dpr1` force 1x pixel density. Combine them in
+one hash (`#2d-bench`). **B** runs the benchmark, **H** toggles the HUD.
+
+`bench/legacy-canvas2d.html` is the original unoptimised Canvas2D build, kept as the A/B
+control for the glyph-atlas and instancing work.
+
+## License
+
+MIT

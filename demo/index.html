@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>inkfield — playground</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* The effect canvas sits at z-index:-1, so the root paints the ground colour and the
+       body must stay transparent -- a background on <body> would cover the canvas. */
+    html { background: #07080b; }
+    body {
+      background: transparent;
+      width: 100%; height: 100%; overflow: hidden;
+      font-family: 'Courier New', Courier, monospace; color: #d9e7ff;
+    }
+    #perfHud {
+      position: fixed; left: 16px; bottom: 16px; z-index: 20;
+      min-width: 280px; padding: 12px 14px;
+      border: 1px solid rgba(120, 170, 255, 0.2); border-radius: 12px;
+      background: rgba(7, 8, 11, 0.76); backdrop-filter: blur(10px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      pointer-events: none; white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <div id="perfHud" aria-live="polite">Starting…</div>
+
+  <script type="module">
+    import { createInkfield } from '../src/inkfield.js';
+
+    const flag = (name) => location.hash.includes(name);
+    const perfHud = document.getElementById('perfHud');
+
+    // The HUD, the benchmark and the sliders are all demo scaffolding built on the public
+    // API -- onFrame for telemetry, inject() for the stress pattern. None of it ships.
+    const ink = createInkfield({
+      renderer: flag('2d') ? 'canvas2d' : 'auto',   // #2d A/Bs the fallback path
+      maxDpr: flag('dpr1') ? 1 : 2,                 // #dpr1 reproduces equal-pixel benchmarks
+      onFrame,
+    });
+
+    const bench = {
+      running: false, start: 0, duration: 8000, seeded: false,
+      frames: [], intervals: [], result: null, lastBurst: 0, everyMs: 30,
+    };
+    const WARMUP_FRAMES = 10;   // JIT, first GC and the seed burst are startup, not cost
+    let hudAt = 0;
+
+    function onFrame(stats) {
+      const now = performance.now();
+      if (bench.running) {
+        automatedBurst(now);
+        bench.frames.push(stats.frameMs);
+        if (stats.frameIntervalMs) bench.intervals.push(stats.frameIntervalMs);
+        if (now - bench.start >= bench.duration) finishBenchmark();
+      }
+      if (now - hudAt >= 500) { hudAt = now; updateHud(stats); }
+    }
+
+    function percentile(sorted, p) {
+      if (!sorted.length) return 0;
+      return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
+    }
+
+    function beginBenchmark() {
+      Object.assign(bench, { running: true, start: performance.now(), seeded: false,
+                             frames: [], intervals: [], result: null, lastBurst: 0 });
+    }
+
+    function finishBenchmark() {
+      bench.running = false;
+      const frames = bench.frames.slice(WARMUP_FRAMES).sort((a, b) => a - b);
+      const raf = bench.intervals.slice(WARMUP_FRAMES).sort((a, b) => a - b);
+      const avgFrame = frames.reduce((a, b) => a + b, 0) / (frames.length || 1);
+      const avgRaf = raf.reduce((a, b) => a + b, 0) / (raf.length || 1);
+      bench.result = {
+        avgFrame, p95Frame: percentile(frames, 0.95), p99Frame: percentile(frames, 0.99),
+        avgFps: avgRaf ? 1000 / avgRaf : 0,
+        p99Fps: raf.length ? 1000 / percentile(raf, 0.99) : 0,
+        frames: frames.length,
+      };
+      console.table({ benchmark_ms_8000_heavy: bench.result });
+    }
+
+    function automatedBurst(now) {
+      const W = innerWidth, H = innerHeight, p = ink.params;
+      if (!bench.seeded) {
+        for (const [x, y] of [[0.18, 0.28], [0.5, 0.22], [0.82, 0.28], [0.26, 0.7], [0.74, 0.72]]) {
+          ink.inject(x * W, y * H, { radius: p.clickRadius * 2.1, density: p.clickDensity * 2.2, fx: 0.32, fy: -0.28 });
+        }
+        bench.seeded = true;
+      }
+      if (bench.lastBurst && now - bench.lastBurst < bench.everyMs) return;
+      const t = (now - bench.start) * 0.0042;
+      for (const phase of [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5]) {
+        ink.inject(
+          W * 0.5 + Math.cos(t + phase) * W * 0.32,
+          H * 0.5 + Math.sin(t * 1.37 + phase) * H * 0.24,
+          { radius: p.mouseRadius * 1.85, density: p.mouseDensity * 1.75,
+            fx: Math.cos(t * 2.6 + phase) * 34 * p.mouseForce,
+            fy: Math.sin(t * 2.1 + phase) * 34 * p.mouseForce },
+        );
+      }
+      bench.lastBurst = now;
+    }
+
+    function updateHud(s) {
+      const r = bench.result;
+      const line = r
+        ? `Benchmark 8s heavy: avg ${r.avgFrame.toFixed(2)}ms | p95 ${r.p95Frame.toFixed(2)}ms | p99 ${r.p99Fps.toFixed(1)} FPS`
+        : (bench.running ? 'Benchmark: running heavy automated stress pattern…' : 'Benchmark: idle');
+      perfHud.textContent =
+        `Renderer: ${s.renderer}\n` +
+        `Grid: ${s.cols}×${s.rows} @ ${s.dpr}x DPR\n` +
+        `FPS: ${s.fps.toFixed(1)}\n` +
+        `Frame: ${s.frameMs.toFixed(2)} ms\n` +
+        `Step: ${s.stepMs.toFixed(2)} ms\n` +
+        `Render: ${s.renderMs.toFixed(2)} ms\n` +
+        `Active cells: ${s.activeCells} / ${s.cells} (${s.drawnCells} drawn)\n` +
+        line + `\n` +
+        `Press B to run benchmark, H to hide HUD.`;
+    }
+
+    addEventListener('keydown', (e) => {
+      if (e.key === 'b' || e.key === 'B') beginBenchmark();
+      if (e.key === 'h' || e.key === 'H') {
+        perfHud.style.display = perfHud.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+
+    if (!ink.running) perfHud.textContent = 'Stopped: prefers-reduced-motion is set.';
+    if (flag('bench')) beginBenchmark();
+
+    // Tweakpane is ~150KB of CDN for dev-only sliders. Open with #tune to load it.
+    if (flag('tune')) {
+      const { Pane } = await import('https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js');
+      const pane = new Pane({ title: 'Simulation Controls' });
+      const p = ink.params;
+
+      const fGrid = pane.addFolder({ title: 'Grid & Visuals' });
+      // cellSize reshapes the grid and the atlas, so it is the one knob needing resize().
+      fGrid.addBinding(p, 'cellSize', { min: 8, max: 32, step: 1 }).on('change', () => ink.resize());
+      fGrid.addBinding(p, 'dt', { min: 0.05, max: 0.3, step: 0.01, label: 'Time Step' });
+      // Under WebGL2 the shader reads hue as a uniform each frame; Canvas2D bakes it in.
+      const reHue = () => { if (ink.renderer === 'canvas2d') ink.resize(); };
+      fGrid.addBinding(p, 'baseHue', { min: 0, max: 360, step: 1 }).on('change', reHue);
+      fGrid.addBinding(p, 'hueShift', { min: 0, max: 180, step: 1 }).on('change', reHue);
+
+      const fFluid = pane.addFolder({ title: 'Fluid Dynamics' });
+      fFluid.addBinding(p, 'dissipation', { min: 0.90, max: 0.999, step: 0.001, label: 'Density Fade' });
+      fFluid.addBinding(p, 'velocityDamping', { min: 0.50, max: 0.99, step: 0.01, label: 'Velocity Fade' });
+      fFluid.addBinding(p, 'viscosity', { min: 0, max: 0.0005, step: 0.00001 });
+      fFluid.addBinding(p, 'diffusion', { min: 0, max: 0.001, step: 0.00005 });
+      fFluid.addBinding(p, 'iterations', { min: 1, max: 10, step: 1 });
+
+      const fMouse = pane.addFolder({ title: 'Mouse Trail' });
+      fMouse.addBinding(p, 'mouseRadius', { min: 2, max: 40, step: 1 });
+      fMouse.addBinding(p, 'mouseDensity', { min: 0.05, max: 2.0, step: 0.05 });
+      fMouse.addBinding(p, 'mouseForce', { min: -0.02, max: 0.02, step: 0.0005, label: 'Impulse Force' });
+
+      const fClick = pane.addFolder({ title: 'Click Burst' });
+      fClick.addBinding(p, 'clickRadius', { min: 8, max: 80, step: 2 });
+      fClick.addBinding(p, 'clickForce', { min: 0.05, max: 2.0, step: 0.05 });
+      fClick.addBinding(p, 'clickDensity', { min: 0.2, max: 5.0, step: 0.1 });
+    }
+  </script>
+</body>
+</html>

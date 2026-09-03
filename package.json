@@ -1,0 +1,45 @@
+{
+  "name": "inkfield",
+  "version": "0.1.0",
+  "description": "A stable-fluids simulation rendered as drifting ASCII glyphs. Drop-in background effect, WebGL2 with a Canvas2D fallback, no dependencies.",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./src/inkfield.d.ts",
+      "default": "./src/inkfield.js"
+    },
+    "./react": {
+      "types": "./src/react.d.ts",
+      "default": "./src/react.js"
+    },
+    "./solver": "./src/solver.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "fluid",
+    "ascii",
+    "canvas",
+    "webgl2",
+    "background",
+    "generative",
+    "effect"
+  ],
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node test.mjs",
+    "bench": "node bench/step.mjs",
+    "demo": "python3 -m http.server 8080"
+  }
+}

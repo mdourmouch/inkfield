@@ -1,6 +1,6 @@
 // Isolates the sim core from the DOM so step() cost is measurable without a browser.
 // Proves/disproves the single biggest claim: clamped IX() in the hot loops is the bottleneck.
-import { readFileSync } from 'node:fs';
+import { createSolver } from '../src/solver.js';
 const cols = +(process.env.C||137), rows = +(process.env.R||61), N = cols * rows;   // 1920x1080 @ cellSize 14
 const ITER = 4, DT = 0.15, VISC = 0.00001, DIFF = 0.00001, DISS = 0.997, VDAMP = 0.96;
 
@@ -74,17 +74,11 @@ function makeA() {
   };
 }
 
-// ---------- variant B: the sim core as actually shipped, lifted out of the HTML ----------
-// Extracting instead of copying means this check guards the real file, not a stale duplicate.
-const HTML = new URL('./inkfield-optimized-monitored.html', import.meta.url);
+// ---------- variant B: the sim core as actually shipped ----------
+// Importing the real module instead of copying it means this check guards the shipped
+// solver, not a stale duplicate that drifted from it.
 function makeB() {
-  const src = readFileSync(HTML, 'utf8');
-  const from = src.indexOf('    function setBnd');
-  const to = src.indexOf('    function processPointerInput');
-  if (from < 0 || to < 0) throw new Error('sim core not found in ' + HTML.pathname);
-  const core = new Function('cols', 'rows', 'PARAMS',
-    src.slice(from, to) + '\nreturn { diffuse, advect, project };')(cols, rows, { iterations: ITER });
-  const { diffuse, advect, project } = core;
+  const { diffuse, advect, project } = createSolver(cols, rows, { iterations: ITER });
   return (f) => {
     const [u, v, u_prev, v_prev, density, density_prev, pressure, divergence] = f;
     diffuse(1, u_prev, u, VISC, DT); diffuse(2, v_prev, v, VISC, DT);
