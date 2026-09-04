@@ -63,6 +63,10 @@
     li::before { content: '<'; position: absolute; left: 0; color: #7aa2ff; }
     footer { color: #5d6b8a; font-size: 0.85rem; }
 
+    /* Tweakpane's default container has z-index:auto, so the page content -- lifted above
+       the canvas -- would otherwise paint over it and swallow every click. */
+    .tp-dfwv { z-index: 30; }
+
     #perfHud {
       position: fixed; left: 16px; bottom: 16px; z-index: 20;
       min-width: 280px; padding: 12px 14px;
@@ -249,12 +253,12 @@ createInkfield();          // fixed, full-viewport, click-through</pre>
       perfHud.hidden = false;
       perfHud.textContent = 'Stopped: prefers-reduced-motion is set.';
     }
-    if (flag('bench')) beginBenchmark();
-
     // Tweakpane is ~150KB of CDN for dev-only sliders. Open with #tune to load it.
-    if (flag('tune')) {
+    let pane = null;
+    async function setupTune() {
+      if (pane) return;
       const { Pane } = await import('https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js');
-      const pane = new Pane({ title: 'Simulation Controls' });
+      pane = new Pane({ title: 'Simulation Controls' });
       const p = ink.params;
 
       const fGrid = pane.addFolder({ title: 'Grid & Visuals' });
@@ -283,6 +287,15 @@ createInkfield();          // fixed, full-viewport, click-through</pre>
       fClick.addBinding(p, 'clickForce', { min: 0.05, max: 2.0, step: 0.05 });
       fClick.addBinding(p, 'clickDensity', { min: 0.2, max: 5.0, step: 0.1 });
     }
+
+    // Read on load and again on every hash change, so the #tune link in the header works
+    // without a reload rather than setting a hash that nothing acts on.
+    function applyHash() {
+      if (flag('tune')) setupTune();
+      if (flag('bench') && !bench.running) beginBenchmark();
+    }
+    addEventListener('hashchange', applyHash);
+    applyHash();
   </script>
 </body>
 </html>
