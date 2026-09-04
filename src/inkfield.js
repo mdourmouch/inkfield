@@ -120,7 +120,7 @@ export function createInkfield(options = {}) {
   let solver = null, inst = null;
   let cols = 0, rows = 0, dpr = 1, cssW = 0, cssH = 0;
   let tileCss = 0, tilePx = 0, tileOff = 0;
-  let prog, vao, instBuf, tex;
+  let prog, vao, instBuf, cornerBuf, tex;
   const uni = {};
 
   const stats = {
@@ -133,8 +133,13 @@ export function createInkfield(options = {}) {
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
     gl.compileShader(s);
-    // A silent shader failure renders a blank screen with no error, so fail loudly.
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    // A silent shader failure renders a blank screen with no error, so fail loudly -- and
+    // with the driver's log, which is empty often enough that "Error: null" is a real risk.
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const kind = type === gl.VERTEX_SHADER ? 'vertex' : 'fragment';
+      const log = gl.getShaderInfoLog(s) || '(driver returned no log)';
+      throw new Error(`inkfield: ${kind} shader failed to compile\n${log}`);
+    }
     return s;
   }
 
@@ -143,7 +148,9 @@ export function createInkfield(options = {}) {
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
     gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
     gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error('inkfield: shader program failed to link\n' + (gl.getProgramInfoLog(prog) || '(driver returned no log)'));
+    }
     gl.useProgram(prog);
     for (const n of ['u_res', 'u_uvTile', 'u_cell', 'u_tile', 'u_off',
                      'u_baseHue', 'u_hueShift', 'u_sat', 'u_light', 'u_alpha']) {
@@ -153,8 +160,8 @@ export function createInkfield(options = {}) {
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
 
-    const corner = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, corner);
+    cornerBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     const cLoc = gl.getAttribLocation(prog, 'a_corner');
     gl.enableVertexAttribArray(cLoc);
@@ -479,7 +486,16 @@ export function createInkfield(options = {}) {
       if (gl) {
         canvas.removeEventListener('webglcontextlost', onLost);
         canvas.removeEventListener('webglcontextrestored', onRestored);
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        gl.deleteProgram(prog);
+        gl.deleteVertexArray(vao);
+        gl.deleteBuffer(instBuf);
+        gl.deleteBuffer(cornerBuf);
+        gl.deleteTexture(tex);
+        // A canvas gets one context for its lifetime, so losing it is permanent. A
+        // supplied canvas can be mounted again -- React strict mode does exactly that --
+        // and the second mount would inherit the dead context, where compileShader fails
+        // with no info log. Only force the context away when the canvas goes with it.
+        if (owned) gl.getExtension('WEBGL_lose_context')?.loseContext();
       }
       if (owned) canvas.remove();
       solver = null; inst = null;

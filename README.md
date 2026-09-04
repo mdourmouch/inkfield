@@ -62,8 +62,9 @@ Props are read once, on mount — changing one later does not restart the effect
 restarting throws the field away. To animate a parameter, mutate `handle.params` from a
 `createInkfield` call of your own; the solver reads it live.
 
-If your bundler objects to untranspiled ESM in `node_modules`, add
-`transpilePackages: ['inkfield']` to `next.config.js`.
+Verified against Next 16 with Turbopack and `output: 'export'`, with no
+`transpilePackages` entry needed. If an older bundler objects to untranspiled ESM in
+`node_modules`, add `transpilePackages: ['inkfield']` to `next.config.js`.
 
 ### Your own canvas
 

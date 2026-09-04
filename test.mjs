@@ -9,16 +9,31 @@ const stub2d = () => ({
   fillStyle: '#000000', font: '', textAlign: '', textBaseline: '',
   setTransform() {}, fillText() {}, fillRect() {}, clearRect() {}, drawImage() {},
 });
-const makeCanvas = () => ({
+const makeCanvas = (webgl = null) => ({
   width: 0, height: 0, style: { cssText: '' },
-  getContext: (kind) => (kind === '2d' ? stub2d() : null),   // no WebGL: exercise the fallback
+  getContext: (kind) => (kind === '2d' ? stub2d() : webgl),
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
   addEventListener() {}, removeEventListener() {}, remove() {},
 });
 
+// A WebGL2 context thin enough to record what was called on it. Constants come back as
+// their own name, which is distinct enough for the code under test.
+function makeGL(calls) {
+  const ext = { loseContext: () => calls.push('loseContext') };
+  return new Proxy({}, {
+    get(_, k) {
+      if (typeof k !== 'string') return undefined;
+      if (/^[A-Z][A-Z0-9_]*$/.test(k)) return k;
+      if (k === 'getShaderParameter' || k === 'getProgramParameter') return () => true;
+      if (k === 'getExtension') return () => ext;
+      return (...a) => { calls.push(k); return {}; };
+    },
+  });
+}
+
 let rafId = 0;
 const pending = new Map();
-globalThis.document = { createElement: makeCanvas, body: { appendChild() {} } };
+globalThis.document = { createElement: () => makeCanvas(), body: { appendChild() {} } };
 globalThis.window = {
   devicePixelRatio: 2,
   addEventListener: (t, fn) => listeners.set(t, fn),
@@ -69,4 +84,25 @@ assert.equal(listeners.size, 0, 'destroy() should remove its window listeners');
 assert.equal(ink.running, false);
 ink.destroy();   // idempotent
 
-console.log('ok — renderer wiring, input, dissipation and teardown');
+// A canvas gets one WebGL context for its lifetime. React strict mode unmounts and
+// remounts against the same element, so destroy() must leave that context usable --
+// otherwise the second mount inherits a lost context and compileShader fails with a null
+// info log, which surfaces in Next as a bare `Error: null` out of the layout.
+const calls = [];
+const shared = makeCanvas(makeGL(calls));
+const first = createInkfield({ canvas: shared, background: '#07080b' });
+assert.equal(first.renderer, 'webgl2');
+first.destroy();
+assert.ok(!calls.includes('loseContext'), 'must not lose the context of a canvas it does not own');
+assert.ok(calls.includes('deleteProgram') && calls.includes('deleteTexture'), 'GL resources should be released');
+const second = createInkfield({ canvas: shared, background: '#07080b' });
+assert.equal(second.renderer, 'webgl2', 'a remount on the same canvas must still get WebGL2');
+second.destroy();
+
+// An owned canvas is removed from the document, so its context can go with it.
+const ownedCalls = [];
+globalThis.document.createElement = () => makeCanvas(makeGL(ownedCalls));
+createInkfield({ background: '#07080b' }).destroy();
+assert.ok(ownedCalls.includes('loseContext'), 'an owned canvas should release its context');
+
+console.log('ok — renderer wiring, input, dissipation, teardown and remount');
