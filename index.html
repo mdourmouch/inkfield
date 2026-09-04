@@ -26,8 +26,8 @@
       /* Full strength through the hero, then down to a wash for the rest of the page, so
          ink still moves behind the copy without competing with it. The stops are in vh so
          the falloff stays anchored to the banner however long the page gets. */
-      -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 30vh, rgba(0,0,0,0.20) 64vh, rgba(0,0,0,0.15) 100%);
-      mask-image: linear-gradient(to bottom, #000 0, #000 30vh, rgba(0,0,0,0.20) 64vh, rgba(0,0,0,0.15) 100%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 34vh, rgba(0,0,0,0.34) 64vh, rgba(0,0,0,0.28) 100%);
+      mask-image: linear-gradient(to bottom, #000 0, #000 34vh, rgba(0,0,0,0.34) 64vh, rgba(0,0,0,0.28) 100%);
     }
     /* Everything readable sits above the canvas. */
     .hero, main { position: relative; z-index: 1; }
@@ -322,8 +322,8 @@ const defaults = {
   clickDensity: 3.1,
   baseHue: 210,
   hueShift: 40,
-  saturation: 90,
-  lightness: 80,
+  saturation: 88,
+  lightness: 92,   // glyphs are thin marks on a dark ground; below ~90 the faint ones vanish
   alpha: 1,
 };
 

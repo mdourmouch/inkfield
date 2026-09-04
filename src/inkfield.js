@@ -19,8 +19,8 @@ export const defaults = {
   clickDensity: 3.1,
   baseHue: 210,
   hueShift: 40,
-  saturation: 90,
-  lightness: 80,
+  saturation: 88,
+  lightness: 92,   // glyphs are thin marks on a dark ground; below ~90 the faint ones vanish
   alpha: 1,
 };
 
