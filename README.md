@@ -4,6 +4,11 @@ A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs. Drop it b
 page as a background effect: no dependencies, no build step, WebGL2 with a Canvas2D
 fallback, 13 kB packed.
 
+![Ink glyphs drifting across a dark field](demo/preview.png)
+
+Open [`demo/standalone.html`](demo/standalone.html) to try it: one self-contained file,
+no server and no install.
+
 Every frame solves incompressible fluid motion on a grid (advect, project, damp), then
 maps each cell to one of four glyphs (`' ' _ < o`) by density plus velocity magnitude.
 Ink is pushed by the pointer, dissipates as it spreads, and shifts hue with intensity.
