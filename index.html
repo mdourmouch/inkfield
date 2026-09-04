@@ -10,27 +10,33 @@
     * { box-sizing: border-box; }
     html { background: #07080b; }
     body {
+      /* Positioned, so the canvas's inset:0 resolves against the whole document rather
+         than the viewport -- that is what makes it scroll instead of staying put. */
+      position: relative;
       margin: 0; color: #d9e7ff;
       font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       -webkit-font-smoothing: antialiased;
     }
 
-    /* The canvas is absolute against the header, not fixed to the viewport, so the
-       effect scrolls away with the banner instead of following the whole page. */
+    /* Absolute rather than fixed, so the ink scrolls with the page instead of sitting
+       still behind it. inset:0 against a positioned body means the full document height. */
+    #ink {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      display: block; pointer-events: none; z-index: 0;
+      /* Full strength through the hero, then down to a wash for the rest of the page, so
+         ink still moves behind the copy without competing with it. The stops are in vh so
+         the falloff stays anchored to the banner however long the page gets. */
+      -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 30vh, rgba(0,0,0,0.20) 64vh, rgba(0,0,0,0.15) 100%);
+      mask-image: linear-gradient(to bottom, #000 0, #000 30vh, rgba(0,0,0,0.20) 64vh, rgba(0,0,0,0.15) 100%);
+    }
+    /* Everything readable sits above the canvas. */
+    .hero, main { position: relative; z-index: 1; }
     .hero {
-      position: relative; overflow: hidden;
       min-height: 68vh; display: flex; align-items: flex-end;
       padding: 0 24px 6vh;
       border-bottom: 1px solid rgba(120, 170, 255, 0.12);
     }
-    #ink {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      display: block; pointer-events: none;
-      /* Fades the ink out well above the copy, so glyphs never fight the text. */
-      -webkit-mask-image: linear-gradient(to bottom, #000 38%, rgba(0,0,0,0.22) 72%, transparent 100%);
-      mask-image: linear-gradient(to bottom, #000 38%, rgba(0,0,0,0.22) 72%, transparent 100%);
-    }
-    .hero-copy { position: relative; max-width: 64ch; margin: 0 auto; width: 100%; }
+    .hero-copy { max-width: 64ch; margin: 0 auto; width: 100%; }
 
     h1 { font-size: clamp(2.4rem, 8vw, 4rem); line-height: 1.05; margin: 0 0 1rem; letter-spacing: -0.03em; }
     h1 span { color: #7aa2ff; }
@@ -51,7 +57,7 @@
     pre {
       margin: 0; padding: 14px 16px; overflow-x: auto; color: #d9e7ff;
       border: 1px solid rgba(120, 170, 255, 0.18); border-radius: 10px;
-      background: rgba(255, 255, 255, 0.02);
+      background: rgba(7, 8, 11, 0.72); backdrop-filter: blur(6px);
     }
     ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.6rem; }
     li { color: #93a4c4; padding-left: 1.4rem; position: relative; }
@@ -69,13 +75,14 @@
   </style>
 </head>
 <body>
+  <canvas id="ink" aria-hidden="true"></canvas>
+
   <header class="hero">
-    <canvas id="ink" aria-hidden="true"></canvas>
     <div class="hero-copy">
       <h1>ink<span>field</span></h1>
       <p>
         A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs.
-        Move the pointer across this band to trail ink; <strong>click</strong> for a burst.
+        Move the pointer anywhere on the page to trail ink; <strong>click</strong> for a burst.
       </p>
       <p class="hint">
         <kbd>H</kbd> frame stats · <kbd>B</kbd> 8s benchmark · <a href="#tune">#tune</a> sliders
@@ -85,21 +92,22 @@
 
   <main>
     <section>
-      <h2>Scoped to its own element</h2>
+      <h2>One canvas, the height of the page</h2>
       <p>
-        This canvas is <code>position: absolute</code> inside the header rather than fixed to
-        the viewport, so it leaves with the rest of the page as you scroll. A ResizeObserver
-        keeps the simulation grid matched to the canvas box, so the same code works as a
-        full-bleed background or a banner like this one.
+        The canvas is <code>position: absolute</code> over the whole document rather than
+        fixed to the viewport, so the ink scrolls with the content instead of sitting still
+        behind it. A ResizeObserver keeps the simulation grid matched to the canvas box,
+        which here is <span id="pagesize">the full page</span>.
       </p>
     </section>
 
     <section>
       <h2>Behind the text, out of the way</h2>
       <p>
-        The canvas is <code>pointer-events: none</code>, so this copy stays selectable and
-        links keep working. Ink is only injected while the pointer is inside the canvas box,
-        which is why the field stops responding once you scroll past the banner.
+        A CSS mask carries the ink at full strength through the banner and drops it to a
+        wash further down, so it keeps moving behind this paragraph without competing with
+        it. The canvas is <code>pointer-events: none</code>, so the copy stays selectable
+        and links keep working while ink still follows the pointer anywhere on the page.
       </p>
       <pre>npm install inkfield
 
@@ -825,7 +833,7 @@ function createInkfield(options = {}) {
         if (stats.frameIntervalMs) bench.intervals.push(stats.frameIntervalMs);
         if (now - bench.start >= bench.duration) finishBenchmark();
       }
-      if (!perfHud.hidden && now - hudAt >= 500) { hudAt = now; updateHud(stats); }
+      if (now - hudAt >= 500) { hudAt = now; showSize(stats); if (!perfHud.hidden) updateHud(stats); }
     }
 
     const percentile = (sorted, p) =>
@@ -874,6 +882,11 @@ function createInkfield(options = {}) {
       }
       bench.lastBurst = now;
     }
+
+    // The prose claims the grid covers the page; print the measured numbers so it is
+    // checkable rather than a promise.
+    const pageSize = document.getElementById('pagesize');
+    const showSize = (s) => { pageSize.textContent = `${s.cols}×${s.rows} cells`; };
 
     function updateHud(s) {
       const r = bench.result;
