@@ -159,8 +159,14 @@ loops is two simulations.
 | `npm test` | Renderer wiring, input, dissipation and teardown, on a DOM stub. |
 | `npm run bench` | Asserts the shipped solver stays bit-identical to the reference, and times both. |
 | `npm run demo` | Serves the repo on :8080; open <http://localhost:8080/demo/>. |
+| `npm run demo:build` | Regenerates `demo/standalone.html` after a change to `src/`. |
 
-The demo must be served, not opened as a file. Browsers block ES modules over `file://`.
+`demo/index.html` imports from `src/`, so it must be served — browsers block ES module
+fetches over `file://`. **`demo/standalone.html` has the library pasted in and opens by
+double-click**, no server and no network. `npm test` fails if it drifts out of step with
+`src/`.
+
+`examples/nextjs/` is a static-export landing page with the effect scoped to a hero band.
 
 The playground takes URL flags: `#tune` Tweakpane controls · `#bench` autostart the 8s
 stress benchmark · `#2d` force Canvas2D · `#dpr1` force 1x pixel density. Combine them in

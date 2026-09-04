@@ -1,0 +1,59 @@
+html { background: #07080b; }
+body {
+  margin: 0;
+  color: #d9e7ff;
+  font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+
+/* --- hero ------------------------------------------------------------------------- */
+.hero {
+  position: relative;          /* the canvas is absolute against this, not the viewport */
+  overflow: hidden;
+  min-height: 68vh;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 24px 6vh;
+  border-bottom: 1px solid rgba(120, 170, 255, 0.12);
+}
+
+/* Absolute, so it scrolls away with the header. The mask fades the glyphs into the page
+   instead of stopping them on a hard horizontal line. */
+.hero-ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+}
+
+.hero-copy { position: relative; max-width: 62ch; margin: 0 auto; width: 100%; }
+h1 { font-size: clamp(2.4rem, 8vw, 4rem); line-height: 1.05; margin: 0 0 1rem; letter-spacing: -0.03em; }
+h1 span { color: #7aa2ff; }
+
+/* --- body ------------------------------------------------------------------------- */
+main { max-width: 62ch; margin: 0 auto; padding: 8vh 24px 12vh; display: grid; gap: 5rem; }
+section { display: grid; gap: 1rem; }
+h2 { margin: 0; font-size: 1.1rem; font-weight: 400; color: #7aa2ff; letter-spacing: 0.02em; }
+p { margin: 0; color: #93a4c4; text-wrap: pretty; }
+p strong { color: #d9e7ff; font-weight: 400; }
+code { color: #d9e7ff; }
+
+pre {
+  margin: 0; padding: 14px 16px;
+  border: 1px solid rgba(120, 170, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow-x: auto;
+  color: #d9e7ff;
+}
+
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.6rem; }
+li { color: #93a4c4; padding-left: 1.4rem; position: relative; }
+li::before { content: '<'; position: absolute; left: 0; color: #7aa2ff; }
+
+footer { color: #5d6b8a; font-size: 0.85rem; }

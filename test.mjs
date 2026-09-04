@@ -3,6 +3,7 @@
 // stub thin enough to run under node. It checks that ink reaches the screen and that
 // destroy() leaves nothing running -- not what the pixels look like.
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 
 const listeners = new Map();
 const stub2d = () => ({
@@ -105,4 +106,10 @@ globalThis.document.createElement = () => makeCanvas(makeGL(ownedCalls));
 createInkfield({ background: '#07080b' }).destroy();
 assert.ok(ownedCalls.includes('loseContext'), 'an owned canvas should release its context');
 
-console.log('ok — renderer wiring, input, dissipation, teardown and remount');
+// demo/standalone.html is committed so it can be opened straight off a clone, which means
+// it can also drift out of step with src/. Regenerating and comparing costs nothing.
+const { build } = await import('./demo/build.mjs');
+const committed = readFileSync(new URL('./demo/standalone.html', import.meta.url), 'utf8');
+assert.equal(build(), committed, 'demo/standalone.html is stale — run `npm run demo:build`');
+
+console.log('ok — renderer wiring, input, dissipation, teardown, remount and demo freshness');

@@ -48,6 +48,7 @@
   "scripts": {
     "test": "node test.mjs",
     "bench": "node bench/step.mjs",
-    "demo": "python3 -m http.server 8080"
+    "demo": "python3 -m http.server 8080",
+    "demo:build": "node demo/build.mjs"
   }
 }
