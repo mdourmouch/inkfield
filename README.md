@@ -4,7 +4,7 @@ A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs. Drop it b
 page as a background effect: no dependencies, no build step, WebGL2 with a Canvas2D
 fallback, 13 kB packed.
 
-Every frame solves incompressible fluid motion on a grid — advect, project, damp — then
+Every frame solves incompressible fluid motion on a grid (advect, project, damp), then
 maps each cell to one of four glyphs (`' ' _ < o`) by density plus velocity magnitude.
 Ink is pushed by the pointer, dissipates as it spreads, and shifts hue with intensity.
 The result reads as smoke or ink in water, drawn in text.
@@ -15,7 +15,7 @@ The result reads as smoke or ink in water, drawn in text.
 npm install inkfield
 ```
 
-Or skip the install entirely — it is plain ESM, so a CDN works as-is:
+Or skip the install. It is plain ESM, so a CDN works as-is:
 
 ```html
 <script type="module">
@@ -77,8 +77,8 @@ scrolls with the page rather than sitting behind the whole viewport:
 }
 ```
 
-A `ResizeObserver` matches the grid to whatever box the canvas lands in, and ink is only
-injected while the pointer is inside that box.
+Ink is only injected while the pointer is inside the canvas box, so the effect stops
+taking input once you scroll past the banner.
 
 Props are read once, on mount — changing one later does not restart the effect, because
 restarting throws the field away. To animate a parameter, mutate `handle.params` from a
@@ -90,9 +90,9 @@ Verified against Next 16 with Turbopack and `output: 'export'`, with no
 
 ### Your own canvas
 
-Pass one and inkfield leaves its styling and placement to you. Size it with CSS: only the
-backing store is written, so a `ResizeObserver` keeps the grid in step with whatever box
-the canvas ends up in — full viewport or a card in a layout.
+Pass one and inkfield leaves styling and placement to you. Size it with CSS. inkfield
+writes only the backing store, and a `ResizeObserver` keeps the simulation grid matched to
+the canvas box, whether that box is the full viewport or a card in a layout.
 
 ```js
 createInkfield({ canvas: document.querySelector('#bg'), background: null });
@@ -100,7 +100,7 @@ createInkfield({ canvas: document.querySelector('#bg'), background: null });
 
 ## Options
 
-All of [`defaults`](src/inkfield.js) may be passed inline, plus:
+Every key in [`defaults`](src/inkfield.js) can be passed inline, plus:
 
 | | |
 |---|---|
@@ -115,10 +115,9 @@ All of [`defaults`](src/inkfield.js) may be passed inline, plus:
 | `reducedMotion` | `'respect'` (default) or `'ignore'`. |
 | `onFrame` | `(stats) => void`, every frame. Timings, grid size, cells drawn. |
 
-Sim parameters — `cellSize`, `dt`, `dissipation`, `velocityDamping`, `baseHue`,
-`hueShift`, `mouseRadius`, `clickForce`, … — are listed in `defaults` and live on
-`ink.params`. Mutate them and the next frame uses them; after `cellSize`, call
-`ink.resize()`.
+`defaults` lists the sim parameters: `cellSize`, `dt`, `dissipation`, `velocityDamping`,
+`baseHue`, `hueShift`, `mouseRadius`, `clickForce` and the rest. They live on `ink.params`.
+Mutate one and the next frame uses it. After `cellSize`, call `ink.resize()`.
 
 ## Handle
 
@@ -133,18 +132,23 @@ ink.resize()
 ink.destroy()
 ```
 
-`destroy()` is required on unmount — React strict mode mounts twice, and two live rAF
+`destroy()` is required on unmount. React strict mode mounts twice, and two live rAF
 loops is two simulations.
 
 ## Behaviour worth knowing
 
 - **The field starts empty.** Nothing is drawn until the pointer moves or you call
-  `inject`/`burst`. If you want motion on an untouched page, drive it yourself from a
-  timer — see the benchmark's stress pattern in `demo/index.html`.
+  `inject`/`burst`. To get motion on an untouched page, drive it from a timer. The
+  benchmark's stress pattern in `demo/index.html` is a working example.
+- **A fast pointer draws nothing.** One `mouseDensity` dab lands below the first glyph
+  step, so a cell only becomes visible once several frames hit it. Measured at the default
+  `cellSize: 14`, a pointer moving 8 px per frame leaves a trail and one moving 14 px per
+  frame leaves none. Raise `mouseDensity` if quick sweeps should register.
 - **`prefers-reduced-motion` stops the loop** and paints the background only. Pass
   `reducedMotion: 'ignore'` to override.
-- **Backgrounded tabs cost nothing** — `requestAnimationFrame` does not fire. A lost
-  WebGL context is caught and re-initialised on restore.
+- **Backgrounded tabs cost nothing.** `requestAnimationFrame` does not fire there.
+- **A lost WebGL context recovers.** Sleep or a GPU reset drops the context; inkfield
+  catches that and rebuilds on restore, rather than leaving a canvas blank for good.
 - **Pointer listeners are on `window`**, since a background canvas is `pointer-events:
   none` and never receives the events itself.
 
@@ -156,7 +160,7 @@ loops is two simulations.
 | `npm run bench` | Asserts the shipped solver stays bit-identical to the reference, and times both. |
 | `npm run demo` | Serves the repo on :8080; open <http://localhost:8080/demo/>. |
 
-The demo must be served, not opened as a file — browsers block ES modules over `file://`.
+The demo must be served, not opened as a file. Browsers block ES modules over `file://`.
 
 The playground takes URL flags: `#tune` Tweakpane controls · `#bench` autostart the 8s
 stress benchmark · `#2d` force Canvas2D · `#dpr1` force 1x pixel density. Combine them in
