@@ -3,8 +3,16 @@
   "version": "0.1.0",
   "description": "A stable-fluids simulation rendered as drifting ASCII glyphs. Drop-in background effect, WebGL2 with a Canvas2D fallback, no dependencies.",
   "type": "module",
+  "types": "./src/inkfield.d.ts",
   "sideEffects": false,
   "license": "MIT",
+  "author": "Mehmed Dourmouch",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mdourmouch/inkfield.git"
+  },
+  "homepage": "https://github.com/mdourmouch/inkfield#readme",
+  "bugs": "https://github.com/mdourmouch/inkfield/issues",
   "exports": {
     ".": {
       "types": "./src/inkfield.d.ts",
