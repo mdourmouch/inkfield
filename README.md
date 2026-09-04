@@ -4,10 +4,11 @@ A Jos Stam stable-fluids simulation rendered as drifting ASCII glyphs. Drop it b
 page as a background effect: no dependencies, no build step, WebGL2 with a Canvas2D
 fallback, 13 kB packed.
 
-![Ink glyphs drifting across a dark field](demo/preview.png)
+[![Ink glyphs drifting across a dark field](demo/preview.png)](https://mdourmouch.github.io/inkfield/)
 
-Open [`demo/standalone.html`](demo/standalone.html) to try it: one self-contained file,
-no server and no install.
+**[Try it](https://mdourmouch.github.io/inkfield/)** — that page is the repo's `index.html`,
+one self-contained file with the library pasted in, so it also opens by double-click after
+a clone.
 
 Every frame solves incompressible fluid motion on a grid (advect, project, damp), then
 maps each cell to one of four glyphs (`' ' _ < o`) by density plus velocity magnitude.
@@ -163,15 +164,16 @@ loops is two simulations.
 |---|---|
 | `npm test` | Renderer wiring, input, dissipation and teardown, on a DOM stub. |
 | `npm run bench` | Asserts the shipped solver stays bit-identical to the reference, and times both. |
-| `npm run demo` | Serves the repo on :8080; open <http://localhost:8080/demo/>. |
-| `npm run demo:build` | Regenerates `demo/standalone.html` after a change to `src/`. |
+| `npm run demo` | Serves the repo on :8080. `/` is the built page, `/demo/` the source one. |
+| `npm run demo:build` | Rebuilds `index.html` after a change to `src/` or `demo/index.html`. |
 
-`demo/index.html` imports from `src/`, so it must be served — browsers block ES module
-fetches over `file://`. **`demo/standalone.html` has the library pasted in and opens by
-double-click**, no server and no network. `npm test` fails if it drifts out of step with
-`src/`.
+`demo/index.html` is the source page and imports from `src/`, so it needs a server:
+browsers block ES module fetches over `file://`. `demo/build.mjs` pastes the library into
+it to produce the root `index.html`, which is what GitHub Pages serves and what opens by
+double-click. `npm test` regenerates that file and fails if it has drifted, so the two
+cannot diverge.
 
-`examples/nextjs/` is a static-export landing page with the effect scoped to a hero band.
+`examples/nextjs/` is the same page as a Next.js app, for the React integration.
 
 The playground takes URL flags: `#tune` Tweakpane controls · `#bench` autostart the 8s
 stress benchmark · `#2d` force Canvas2D · `#dpr1` force 1x pixel density. Combine them in

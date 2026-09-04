@@ -106,10 +106,10 @@ globalThis.document.createElement = () => makeCanvas(makeGL(ownedCalls));
 createInkfield({ background: '#07080b' }).destroy();
 assert.ok(ownedCalls.includes('loseContext'), 'an owned canvas should release its context');
 
-// demo/standalone.html is committed so it can be opened straight off a clone, which means
-// it can also drift out of step with src/. Regenerating and comparing costs nothing.
+// index.html is committed so GitHub Pages can serve it and a clone can open it directly,
+// which means it can also drift out of step with src/. Regenerating and comparing is free.
 const { build } = await import('./demo/build.mjs');
-const committed = readFileSync(new URL('./demo/standalone.html', import.meta.url), 'utf8');
-assert.equal(build(), committed, 'demo/standalone.html is stale — run `npm run demo:build`');
+const committed = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+assert.equal(build(), committed, 'index.html is stale — run `npm run demo:build`');
 
 console.log('ok — renderer wiring, input, dissipation, teardown, remount and demo freshness');
