@@ -58,6 +58,28 @@ export default function RootLayout({ children }) {
 }
 ```
 
+Pass a `className` (or a `style`) and the fixed-background default is dropped, so the
+canvas is laid out by your stylesheet. That is how you scope the effect to a banner that
+scrolls with the page rather than sitting behind the whole viewport:
+
+```jsx
+<header className="hero">          {/* position: relative */}
+  <Inkfield className="hero-ink" background={null} />
+  <h1>…</h1>                       {/* position: relative, so it paints on top */}
+</header>
+```
+
+```css
+.hero-ink {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+```
+
+A `ResizeObserver` matches the grid to whatever box the canvas lands in, and ink is only
+injected while the pointer is inside that box.
+
 Props are read once, on mount — changing one later does not restart the effect, because
 restarting throws the field away. To animate a parameter, mutate `handle.params` from a
 `createInkfield` call of your own; the solver reads it live.
